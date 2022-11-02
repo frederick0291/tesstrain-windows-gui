@@ -18,7 +18,8 @@
 #SingleInstance Off
 FileEncoding "UTF-8-RAW"
 
-VERSION_NUMBER := "3.0"
+VERSION_NUMBER := "5.12"
+PROGRAM_TITLE := "Tesstrain GUI"
 
 if (!A_IsCompiled) {
 	TraySetIcon(A_ScriptDir "\icon.ico",,true)
@@ -26,7 +27,7 @@ if (!A_IsCompiled) {
 
 CONFIGURATION_FILE := A_ScriptDir "\tesstrain_gui.ini"
 
-CONFIGURATION_VARIABLES_LIST := ["BIN_DIR", "DATA_DIR", "TESSDATA", "GROUND_TRUTH_DIR", "DEBUG_MODE", "MODEL_NAME", "OUTPUT_DIR", "WORDLIST_FILE", "NUMBERS_FILE", "PUNC_FILE", "START_MODEL", "LAST_CHECKPOINT", "PROTO_MODEL", "MAX_ITERATIONS", "DEBUG_INTERVAL", "LEARNING_RATE", "NET_SPEC", "LANG_TYPE", "NORM_MODE", "PASS_THROUGH_RECORDER", "LANG_IS_RTL", "GENERATE_BOX_SCRIPT", "PSM", "RANDOM_SEED", "RATIO_TRAIN", "TARGET_ERROR_RATE", "CREATE_BEST_TRAINEDDATA", "CREATE_FAST_TRAINEDDATA", "DELETE_BOX_FILES", "DELETE_LSTMF_FILES", "DELETE_MODEL_DIRECTORY", "AUTO_SAVE", "REQUIREMENTS_VERIFIED", "AUTO_CLEAN_OLD_DATA", "AUTO_UPDATE_TESSDATA"]
+CONFIGURATION_VARIABLES_LIST := ["BIN_DIR", "DATA_DIR", "TESSDATA", "GROUND_TRUTH_DIR", "DEBUG_MODE", "MODEL_NAME", "OUTPUT_DIR", "WORDLIST_FILE", "NUMBERS_FILE", "PUNC_FILE", "START_MODEL", "LAST_CHECKPOINT", "PROTO_MODEL", "MAX_ITERATIONS", "DEBUG_INTERVAL", "LEARNING_RATE", "NET_SPEC", "LANG_TYPE", "NORM_MODE", "PASS_THROUGH_RECORDER", "LANG_IS_RTL", "GENERATE_BOX_SCRIPT", "PSM", "RANDOM_SEED", "RATIO_TRAIN", "TARGET_ERROR_RATE", "CREATE_BEST_TRAINEDDATA", "CREATE_FAST_TRAINEDDATA", "DELETE_BOX_FILES", "DELETE_LSTMF_FILES", "DELETE_MODEL_DIRECTORY", "AUTO_SAVE", "REQUIREMENTS_VERIFIED", "AUTO_CLEAN_OLD_DATA", "AUTO_UPDATE_TESSDATA", "BEEP_END_TRAINING"]
 
 CREATE_BEST_TRAINEDDATA := true
 CREATE_FAST_TRAINEDDATA := true
@@ -38,6 +39,16 @@ WRONG_INPUT_MAP := Map()
 REQUIREMENTS_VERIFIED := false
 AUTO_CLEAN_OLD_DATA := true
 AUTO_UPDATE_TESSDATA := false
+BEEP_END_TRAINING := false
+
+SHUTDOWN_AFTER_TRAINING_COMPLETION := false
+
+VALUE_VALIDATORS := Map(
+	"TARGET_ERROR_RATE", (a)=>(IsNumber(a) && a >= 0 && a <= 100),
+	"RATIO_TRAIN", (a)=>(IsNumber(a) && a > 0 && a <1),
+	"LEARNING_RATE", (a)=>(IsNumber(a) && a > 0 && a <=1),
+	"MAX_ITERATIONS", IsInteger,
+)
 
 ; Start GUI
 TesstrainGui()
@@ -57,12 +68,12 @@ TesstrainGui() {
 	CreateGui()
 
 	CreateGui()	{
-		mainGui := Gui("+OwnDialogs", "Tesstrain GUI v." VERSION_NUMBER)
+		mainGui := Gui("+OwnDialogs", PROGRAM_TITLE " v." VERSION_NUMBER)
 
 		tabs := mainGui.Add("Tab3", , ["Main settings","Advanced"])
 
 		; Main Settings TAB
-		
+
 		AddFolderSelection(
 			"Tesseract executables folder",
 			"BIN_DIR",
@@ -81,7 +92,7 @@ TesstrainGui() {
 
 		modelList := GetStartModelList()
 		if (!ArrayContains(modelList, START_MODEL)) {
-			MsgBox("Couldn't find the selected 'Start model' in your 'TessData folder'. Selecting no start model.")
+			ErrorBox("Couldn't find the selected 'Start model' in your 'TessData folder'. Selecting no start model.")
 			START_MODEL := modelList[1]
 		}
 		AddDropDown(
@@ -140,7 +151,9 @@ TesstrainGui() {
 				. "1=combine graphemes (use for Latin and other simple scripts)`n"
 				. "2=split graphemes (use for Indic/Khmer/Myanmar)`n"
 				. "3=pure unicode (use for Arabic/Hebrew/Thai/Tibetan)"
-				. "`n`nSelect 'Language Type':'Custom' to be able to modify this setting."
+				. "`n`nSelect 'Language Type':'Custom' to be able to modify this setting.",
+			1,
+			3,
 		)
 		AddCheckbox(
 			"Pass through recorder",
@@ -191,7 +204,7 @@ TesstrainGui() {
 			"RATIO_TRAIN",
 			"Ratio of train/eval training data. For example 0.9 means 90% of trainig data is used for training mechanism and the remaining 10% is used for evaluations of current training results. (Default: 0.90)"
 		)
-		AddIntegerSelection(
+		AddNumberSelection(
 			"Maximum iterations",
 			"MAX_ITERATIONS",
 			"If set, exit after this many iterations. A negative value is interpreted as epochs (number of iterations will be based on amount of training data; one Epoch is when an entire dataset is passed through the neural network once). 0 means infinite iterations (end only if 'Target error rate' condition will be met)."
@@ -199,13 +212,12 @@ TesstrainGui() {
 		AddNumberSelection(
 			"Target error rate",
 			"TARGET_ERROR_RATE",
-			"Expected final recognition error percentage. Stop training if the Character Error Rate (CER) gets below this value. It's the '--target_error_rate' argument for 'lstmtraining'.`n"
-				. "You can set it to a negative value to disable this condition.`n`n"
+			"Expected final recognition error percentage. Stop training if the Character Error Rate (CER) gets below this value. It's the '--target_error_rate' argument for 'lstmtraining'.`n`n"
 				. "(Default: 0.01)"
 		)
 
 		; Advanced Settings TAB
-		
+
 		tabs.UseTab("Advanced")
 
 		AddCheckbox(
@@ -214,7 +226,7 @@ TesstrainGui() {
 			"If enabled after each command executed in the system shell there will be a message showed with command output, waiting for confirmation to continue.",
 			true
 		)
-		
+
 		AddCheckbox(
 			"Automatically clean old training data",
 			"AUTO_CLEAN_OLD_DATA",
@@ -226,6 +238,13 @@ TesstrainGui() {
 			"Automatically update TessData",
 			"AUTO_UPDATE_TESSDATA",
 			"If enabled, when training finishes successfuly, TessData folder will be updated with the newly trained model without confirmation. This means the new .traineddata file will be copied to the TessData folder. If the file already exist in TessData, it will be overwritten",
+			false
+		)
+
+		AddCheckbox(
+			"Notify the end of training with a beep",
+			"BEEP_END_TRAINING",
+			"When enabled a beep will sound at the end of the training.",
 			false
 		)
 
@@ -284,7 +303,7 @@ TesstrainGui() {
 			"Clean",
 			CleanModelData,
 			Map(
-				"Output Model", "DELETE_MODEL_DIRECTORY",
+				"Training output folder", "DELETE_MODEL_DIRECTORY",
 				"'.box' files", "DELETE_BOX_FILES",
 				"'.lstmf' files", "DELETE_LSTMF_FILES",
 			),
@@ -320,7 +339,7 @@ TesstrainGui() {
 		exitBtn := mainGui.Add("Button", "ys x+10", "E&xit")
 		exitBtn.OnEvent("Click", ExitGui)
 		resetBtn := mainGui.Add("Button", "ys x+10", "&Reload")
-		resetBtn.OnEvent("Click", (*)=>(mainGui.Destroy(), TesstrainGui()))
+		resetBtn.OnEvent("Click", (*)=>reload())
 		saveBtn := mainGui.Add("Button", "ys x+10", "&Save settings")
 		saveBtn.OnEvent("Click", (*)=>SaveSettings(true))
 		autosaveChb := mainGui.Add("Checkbox", "ys hp 0x20 Checked" AUTO_SAVE " vAUTO_SAVE", "Save settings &automatically on 'Start Training'")
@@ -465,7 +484,16 @@ TesstrainGui() {
 
 	SetCtrlNameGlobalToCtrlValue(ctrlObj, *) {
 		global
-		%ctrlObj.Name% := ctrlObj.Value
+		local globalName := ctrlObj.Name
+		local newValue := ctrlObj.Value
+		if (VALUE_VALIDATORS.Has(globalName) && !VALUE_VALIDATORS[globalName](newValue)) {
+			mainGui[globalName].SetFont("cRed bold")
+			WRONG_INPUT_MAP[globalName] := "Wrong value for '" globalName "'"
+			return
+		}
+		mainGui[globalName].SetFont("cDefault norm")
+		MapSafeDelete(WRONG_INPUT_MAP, globalName)
+		%globalName% := newValue
 	}
 
 	SetCtrlNameGlobalToCtrlText(guiCtrl, *) {
@@ -523,7 +551,7 @@ TesstrainGui() {
 		UpdateValue("PROTO_MODEL", OUTPUT_DIR "\" MODEL_NAME ".traineddata")
 	}
 
-	OnBinDirChange(newBinDir, showErrors:=true) {
+	OnBinDirChange(newBinDir, showPrompts:=true) {
 		static binariesList := ["tesseract", "combine_tessdata", "unicharset_extractor", "merge_unicharsets", "lstmtraining", "combine_lang_model"]
 
 		mainGui.Opt("+OwnDialogs")  ; Force the user to dismiss the dialog before interacting with the main window.
@@ -536,14 +564,17 @@ TesstrainGui() {
 				foundFiles := FindAllFiles(BIN_DIR "\*." binaryName "-master.exe")
 			}
 			if (foundFiles.Length == 0) {
-				if (showErrors) {
-					MsgBox("Error: Couldn't find any '" binaryName "' executable in the selected directory.",, "Iconx")
+				foundFiles := FindAllFiles(BIN_DIR "\*." binaryName "-main.exe")
+			}
+			if (foundFiles.Length == 0) {
+				if (showPrompts) {
+					ErrorBox("Error: Couldn't find any '" binaryName "' executable in the selected directory.")
 				}
 				errored := true
 				break
 			} else if (foundFiles.Length > 1) {
-				if (showErrors) {
-					MsgBox("Error: Multiple binaries found matching criteria: '*" binaryName "*.exe':`n" ArrayJoin(foundFiles, "`n"),, "Iconx")
+				if (showPrompts) {
+					ErrorBox("Error: Multiple binaries found matching criteria: '*" binaryName "*.exe':`n" ArrayJoin(foundFiles, "`n"))
 				}
 				errored := true
 				break
@@ -561,7 +592,7 @@ TesstrainGui() {
 			MapSafeDelete(WRONG_INPUT_MAP, "BIN_DIR")
 
 			newTessdataDir := newBinDir "\tessdata"
-			if (TESSDATA != newTessdataDir && DirExist(newTessdataDir)) {
+			if (showPrompts && TESSDATA != newTessdataDir && DirExist(newTessdataDir)) {
 				if (YesNoConfirmation("Found 'tessdata' subfolder inside selected executables folder. Do you want to set it as 'TessData folder'?")) {
 					UpdateValue("TESSDATA", newTessdataDir)
 					OnTessdataDirChange(newTessdataDir)
@@ -570,12 +601,12 @@ TesstrainGui() {
 		}
 	}
 
-	OnTessdataDirChange(newTessdataDir, showErrors:=true) {
+	OnTessdataDirChange(newTessdataDir, showPrompts:=true) {
 		mainGui.Opt("+OwnDialogs")  ; Force the user to dismiss the dialog before interacting with the main window.
 
 		if (FindAllFiles(newTessdataDir "\*.traineddata").Length == 0) {
-			if (showErrors) {
-				MsgBox("The selected folder doesn't contain any .traineddata files. Please select another one.",, "Iconx")
+			if (showPrompts) {
+				ErrorBox("The selected folder doesn't contain any .traineddata files. Please select another one.")
 			}
 			mainGui["TESSDATA"].SetFont("cRed bold")
 			WRONG_INPUT_MAP["TESSDATA"] := "Wrong 'TessData folder'"
@@ -588,7 +619,7 @@ TesstrainGui() {
 		}
 	}
 
-	OnGroundTruthDirChange(newGroundTruthDir, showErrors:=true) {
+	OnGroundTruthDirChange(newGroundTruthDir, showPrompts:=true) {
 		mainGui.Opt("+OwnDialogs")  ; Force the user to dismiss the dialog before interacting with the main window.
 
 		for (imageExtension in SUPPORTED_IMAGE_FILES) {
@@ -598,8 +629,10 @@ TesstrainGui() {
 				return
 			}
 		}
-		if (showErrors) {
-			MsgBox("No line images found in your selected Ground Truth directory. Please make sure to copy line image files that would be used for training before starting the training.`nSupported formats: " ArrayJoin(SUPPORTED_IMAGE_FILES, ", "),, "Iconx")
+		if (showPrompts) {
+			ErrorBox("No line images found in your selected Ground Truth directory. "
+				. "Please make sure to copy line image files that would be used for training before starting the training.`n"
+				. "Supported formats: " ArrayJoin(SUPPORTED_IMAGE_FILES, ", "))
 		}
 		mainGui["GROUND_TRUTH_DIR"].SetFont("cRed bold")
 		WRONG_INPUT_MAP["GROUND_TRUTH_DIR"] := "No line image files in the 'Ground Truth folder'"
@@ -616,7 +649,7 @@ TesstrainGui() {
 		mainGui["START_MODEL"].Delete()
 		mainGui["START_MODEL"].Add(modelList)
 		if (!ArrayContains(modelList, START_MODEL)) {
-			MsgBox("Couldn't find the selected 'Start model' in your 'TessData folder'. Selecting no start model.")
+			ErrorBox("Couldn't find the selected 'Start model' in your 'TessData folder'. Selecting no start model.")
 			START_MODEL := modelList[1]
 		}
 		mainGui["START_MODEL"].Choose(START_MODEL)

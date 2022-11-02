@@ -1,4 +1,4 @@
-﻿; (C) Copyright 2021, Bartlomiej Uliasz
+; (C) Copyright 2021, Bartlomiej Uliasz
 ; Licensed under the Apache License, Version 2.0 (the "License");
 ; you may not use this file except in compliance with the License.
 ; You may obtain a copy of the License at
@@ -180,7 +180,7 @@ FindNewestFile(pattern) {
 }
 
 FileGetFirstLine(filePath) {
-	return GetFileLine(filePath, 1) 
+	return GetFileLine(filePath, 1)
 }
 
 GetFileLine(filePath, lineNumber) {
@@ -230,43 +230,49 @@ CmdLogAppend(text) {
 	FileAppend text, "command.log"
 }
 
-OcrImageFile(imageFullPath, lang:="", tessdataDir:="") {
+OcrImageFile(imageFullPath, lang:="", tessdataDir:="", pis:=0, local_psm:="") {
 	if (!tessdataDir) {
 		tessdataDir := TESSDATA
 	}
+	outputFile := DATA_DIR "\preview.out"
 	ocrOutput := ExecuteCommand("`"" BINARIES["tesseract"] "`" `"" imageFullPath "`" -"
 		. (lang ? " -l " lang : "")
-		. " --psm 13 -c page_separator= --tessdata-dir `"" tessdataDir "`"")
-	return Trim(ocrOutput.StdOut, "`t`n`r ")
+		. " --psm " (local_psm || PSM) " -c preserve_interword_spaces=" pis " -c page_separator= --tessdata-dir `"" tessdataDir "`" >`"" outputFile "`"", 2)
+	return Trim(FileRead(outputFile), "`t`n`r ")
 }
 
-ProgressStatusGui(newStatus:="", ownerGui:="", windowTitle:="Training progress") {
-	static lastStatus:="", statusGui:="", ownedBy:="", bcer:={}, generateBtn:={}
+ProgressStatusGui(newStatus:="", parentGui:="", windowTitle:="Training progress") {
+	static lastStatus:="", statusGui:="", savedParentGui:="", bcer:={}, generateBtn:={}
+	global SHUTDOWN_AFTER_TRAINING_COMPLETION, StatusUpdate
 
+	; Remove StatusGui if empty arguments and resets to default status function
 	if (!newStatus && statusGui) {
 		MonitorCheckpoints(false)
-		if (ownedBy) {
-			ownedBy.Opt("-Disabled")
+		if (savedParentGui) {
+			savedParentGui.Show()
 		}
-		bcer := generateBtn := {}	; prevents error if there is ongoing CheckCheckpoints timer
+		bcer := generateBtn := {}	; prevents error if there is an ongoing CheckCheckpoints timer
 		statusGui.Destroy()
-		lastStatus := statusGui := ownedBy := ""
+		lastStatus := statusGui := savedParentGui := ""
+		StatusUpdate := DEFAULT_STATUS_FUNCTION
 		return
 	}
 
 	if (!statusGui) {
-		statusGui := Gui("+Resize +AlwaysOnTop", windowTitle)
-		if (ownerGui) {
-			statusGui.Opt("+Owner" ownerGui.Hwnd)
-			ownerGui.Opt("+Disabled")
-			ownedBy := ownerGui
+		statusGui := Gui("-Resize +AlwaysOnTop -SysMenu", windowTitle)
+		if (parentGui) {
+			parentGui.Hide()
+			savedParentGui := parentGui
 		}
-		statusGui.Add("Text", "section xm w200", "Improved BCER")
-		bcer := statusGui.Add("Text", "ys w50", "-")
-		generateBtn := statusGui.Add("Button", "ys w150", "&Generate new model")
+		statusGui.Add("Text", "section xm w115", "Best checkpoint BCER")
+		bcer := statusGui.Add("Text", "ys w45", "-")
+		generateBtn := statusGui.Add("Button", "ys w240", "&Generate model from currently best checkpoint")
 		generateBtn.OnEvent("Click", GenerateTraineddata)
 		generateBtn.Enabled := false
 		MonitorCheckpoints(true)
+
+		shutdownChb := statusGui.Add("Checkbox", "xs hp 0x20 Checked" SHUTDOWN_AFTER_TRAINING_COMPLETION, "Shutdown computer after successfully completed (automatically updates TessData)")
+		shutdownChb.OnEvent("Click", (ctrlObj,*)=>SHUTDOWN_AFTER_TRAINING_COMPLETION:=ctrlObj.Value)
 	}
 
 	if (lastStatus) {
@@ -276,6 +282,8 @@ ProgressStatusGui(newStatus:="", ownerGui:="", windowTitle:="Training progress")
 	lastStatus := statusGui.Add("Text", "ys w40", "...")
 	statusGui.Show("AutoSize")
 	
+	return
+
 	MonitorCheckpoints(isEnable) {
 		if (isEnable) {
 			SetTimer CheckCheckpoints, 2000
@@ -283,7 +291,7 @@ ProgressStatusGui(newStatus:="", ownerGui:="", windowTitle:="Training progress")
 			SetTimer CheckCheckpoints, 0
 		}
 	}
-	
+
 	CheckCheckpoints() {
 		if ((name:=FindNewestFile(OUTPUT_DIR "\checkpoints\" MODEL_NAME "_*.checkpoint")) && statusGui) {
 			bcer.Text := GetBcerFromName(name)
@@ -295,7 +303,7 @@ ProgressStatusGui(newStatus:="", ownerGui:="", windowTitle:="Training progress")
 		checkpointFile := FindNewestFile(OUTPUT_DIR "\checkpoints\" MODEL_NAME "_*.checkpoint")
 		Checkpoint2Traineddata(checkpointFile, DATA_DIR "\" MODEL_NAME ".traineddata", false)
 		if (UpdateModelFileInTessdata()) {
-			MsgBox("New model successfully generated and/or updated")
+			MsgBox("New model successfully generated and/or updated", PROGRAM_TITLE)
 		}
 	}
 }
@@ -309,10 +317,10 @@ GetBcerFromName(name) {
 }
 
 VerifyRequirements() {
-	ProgressStatusGui("Starting up",, "Tesstrain GUI")
-	
+	ProgressStatusGui("Starting up",, PROGRAM_TITLE)
+
 	VerifyPythonDependencies()
-		
+
 	ProgressStatusGui()
 	return true
 }
@@ -327,7 +335,7 @@ VerifyPythonDependencies() {
 			version := ExecuteCommand("python3 --version")
 			PYTHON_EXE := "python3"
 		} catch Error as ePython3 {
-			MsgBox("Executing 'python' command returned error: " ePython.Message "`n`n"
+			ErrorBox("Executing 'python' command returned error: " ePython.Message "`n`n"
 				. "Executing 'python3' command returned error: " ePython3.Message "`n`n"
 				. "Please make sure that you have a Python 3.x installed and that "
 				. "'python.exe' or 'python3.exe' executable file directory is in your PATH environment variable.")
@@ -338,10 +346,10 @@ VerifyPythonDependencies() {
 	versionStr := StrRCutTo(Trim(version.StdOut, "`t`n`r "), " ")
 	versionArray := StrSplit(versionStr, ".")
 	if (versionArray.Length < 1 || !IsInteger(versionArray[1]) || versionArray[1] < 3) {
-		MsgBox("Wrong Python version. Returned version: '" versionStr "'. Please install Python version 3 or above.")
+		ErrorBox("Wrong Python version. Returned version: '" versionStr "'. Please install Python version 3 or above.")
 		ExitApp()
 	}
-	
+
 	ProgressStatusGui("Verifying/installing required Python modules")
 
 	try {
@@ -352,23 +360,31 @@ VerifyPythonDependencies() {
 			ExecuteCommand(PYTHON_EXE " -m pip install Pillow>=6.2.1 python-bidi>=0.4 matplotlib pandas",, true)
 			ExecuteCommand()
 		} else {
-			MsgBox("Error installing required Python modules.`n" e.Message)
+			ErrorBox("Error installing required Python modules.`n" e.Message)
 			ExitApp()
 		}
 	}
 }
 
-YesNoConfirmation(message) {
-	return MsgBox(message,, "YesNo Icon! 0x40000") == "Yes"
+AotBox(message) {
+	MsgBox(message, PROGRAM_TITLE, 0x40000)
 }
 
-MsgBoxAot(message) {
-	MsgBox(message,, 0x40000)
+YesNoConfirmation(message) {
+	return MsgBox(message, PROGRAM_TITLE, "YesNo Icon? 0x40000") == "Yes"
+}
+
+ErrorBox(message) {
+	return MsgBox(message, PROGRAM_TITLE, "Icon! 0x40000")
+}
+
+NotAllowedBox(message) {
+	return MsgBox(message, PROGRAM_TITLE, "IconX 0x40000")
 }
 
 OnError MyErrorFunction
 MyErrorFunction(_exception, _mode) {
-    MsgBox(DescribeException(_exception) "`nMode: " _mode)
+    ErrorBox(DescribeException(_exception) "`nMode: " _mode)
     ExitApp	; It's an unhandled exception. We want to Shutdown the app.
 }
 
@@ -412,4 +428,9 @@ DisableSystemStandby(shouldDisable) {
 		DllCall("SetThreadExecutionState", "UInt", newState)
 		oldState := newState
 	}
+}
+
+TemporaryTooltip(message, seconds) {
+	ToolTip(message)
+	SetTimer(Tooltip, -1000 * seconds)
 }

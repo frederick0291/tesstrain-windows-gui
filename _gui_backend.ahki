@@ -21,9 +21,12 @@ StartTrainingCb(buttonCtrl, *) {
 		errors .= " • " value "`n"
 	}
 	if (errors) {
-		MsgBox("Please fix first following errors:`n" errors,, "Iconx")
+		NotAllowedBox("Please fix first following errors:`n" errors)
 		return
 	}
+
+	StatusUpdate := ProgressStatusGui
+	StatusUpdate("Training startup", buttonCtrl.Gui)
 
 	outputDataExists := FileExist(OUTPUT_DIR "\unicharset")
 
@@ -38,9 +41,6 @@ StartTrainingCb(buttonCtrl, *) {
 		VerifyGtTxtFiles(buttonCtrl.Gui)
 	}
 
-	StatusUpdate := ProgressStatusGui
-	StatusUpdate("Training startup", buttonCtrl.Gui)
-
 	if (AUTO_SAVE) {
 		StatusUpdate("Saving settings")
 		SaveSettings(false)
@@ -49,17 +49,27 @@ StartTrainingCb(buttonCtrl, *) {
 	try {
 		trainingSuccess := StartTraining()
 	} catch Error as e {
-		MsgBox(e.Message ((DEBUG_MODE && e.HasProp("Extra")) ? "`n`n" e.Extra : ""))
+		StatusUpdate()	; closes status and re-enables main Gui
+		ErrorBox(
+			e.Message 
+			. "`n`nIf checkpoint files were created during the process you can use the 'Generate' button to generate '.traineddata' files."
+			. ((DEBUG_MODE && e.HasProp("Extra")) ? "`n`n" e.Extra : "")
+		)
 	} else {
+		SoundPlay "*-1"
+		StatusUpdate()	; closes status and re-enables main Gui
 		if (trainingSuccess) {
 			UpdateModelFileInTessdata()
-			MsgBox "Training finised"
+			if (SHUTDOWN_AFTER_TRAINING_COMPLETION) {
+				Shutdown(9)
+				TrayTip("Shutting down...")
+				ExitApp
+			}
+			MsgBox("Training finished", PROGRAM_TITLE)
 		} else {
-			MsgBox "Training ended with error"
+			ErrorBox "Training ended with an error"
 		}
 	}
-
-	StatusUpdate()	; closes status and re-enables main Gui
 
 	return
 }
@@ -70,16 +80,16 @@ UpdateModelFileInTessdata() {
 	generatedModelFile := DATA_DIR "\" MODEL_NAME ".traineddata"
 	shouldCopy := false
 	if (!FileExist(generatedModelFile)) {
-		MsgBox("There is no newly generated model of name '" MODEL_NAME "' inside the " DATA_DIR " folder. Probably training didn't finish.")
+		ErrorBox("There is no newly generated model of name '" MODEL_NAME "' inside the " DATA_DIR " folder. Probably training didn't finish.")
 		return false
 	}
 	if (!FileExist(tessdataModelFile)) {
-		shouldCopy := AUTO_UPDATE_TESSDATA || YesNoConfirmation("Your new model doesn't exist in your 'tessdata' folder. Do you want me to copy it so that you will be able to use it for recognition?")
+		shouldCopy := AUTO_UPDATE_TESSDATA || SHUTDOWN_AFTER_TRAINING_COMPLETION || YesNoConfirmation("Your new model doesn't exist in your 'tessdata' folder. Do you want me to copy it so that you will be able to use it for recognition?")
 		if (!shouldCopy) {
 			return false
 		}
 	} else if (IsFileOlder(tessdataModelFile, generatedModelFile)) {
-		shouldCopy := AUTO_UPDATE_TESSDATA || YesNoConfirmation("Do you want to update existing '" MODEL_NAME "' model in your 'tessdata' folder so that you will be able to use the new one for recognition?")
+		shouldCopy := AUTO_UPDATE_TESSDATA || SHUTDOWN_AFTER_TRAINING_COMPLETION  || YesNoConfirmation("Do you want to update existing '" MODEL_NAME "' model in your 'tessdata' folder so that you will be able to use the new one for recognition?")
 	}
 
 	if (shouldCopy) {
@@ -91,7 +101,7 @@ UpdateModelFileInTessdata() {
 				ExecuteCommand("copy /y `"" generatedModelFile "`" `"" tessdataModelFile "`"", 3, true)
 				ExecuteCommand()
 			} else {
-				MsgBox("Error copying new model file to '" tessdataModelFile "'.`n" e.Message)
+				ErrorBox("Error copying new model file to '" tessdataModelFile "'.`n" e.Message)
 				return false
 			}
 		}
@@ -109,7 +119,7 @@ SaveSettings(showMessage) {
 	}
 	
 	if (showMessage) {
-		MsgBox("Settings saved")
+		MsgBox("Settings saved", PROGRAM_TITLE)
 	}
 }
 
@@ -162,12 +172,13 @@ GenerateTrainedData(*) {
 	mainGui.Opt("+OwnDialogs")  ; Force the user to dismiss any created here dialogs before interacting with the main window.
 
 	if (FindAllFiles(OUTPUT_DIR "\checkpoints\" MODEL_NAME "*checkpoint").Length == 0) {
-		MsgBox "There are no checkpoint files yet for your selected model name. Please run 'Start Training' first and then you will be able to use generated checkpoint files."
+		ErrorBox("There are no checkpoint files yet for your selected model name. "
+			. "Please run 'Start Training' first and then you will be able to use generated checkpoint files.")
 		return
 	}
 
 	if (!CREATE_BEST_TRAINEDDATA && !CREATE_FAST_TRAINEDDATA) {
-		MsgBox "Please choose at least one of best and/or fast version option"
+		ErrorBox("Please choose at least one of best and/or fast version option")
 		return
 	}
 
@@ -185,7 +196,7 @@ GenerateTrainedData(*) {
 	if (CREATE_FAST_TRAINEDDATA) {
 		MultipleCheckpointToTraineddata(checkpointFileList, true)
 	}
-	MsgBox("'.traineddata' file" (checkpointFileList.Length > 1 ? "s" : "") " generated")
+	MsgBox("'.traineddata' file" (checkpointFileList.Length > 1 ? "s" : "") " generated", PROGRAM_TITLE)
 }
 
 ExitGui(*) {
